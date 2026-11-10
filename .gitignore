@@ -1,0 +1,25 @@
+﻿# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Datasets and weights
+data/
+datasets/
+checkpoints/*
+!checkpoints/.gitkeep
+
+# Generated outputs
+results/*
+!results/.gitkeep
+
+# Local configuration
+.env
+.vscode/
+.idea/
+*.log
+
+# Windows
+Thumbs.db
+Desktop.ini
