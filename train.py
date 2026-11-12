@@ -1,4 +1,5 @@
 
+import argparse
 import random
 from pathlib import Path
 
@@ -93,10 +94,8 @@ def triplet_metrics(embeddings, labels, margin=0.3):
     distances = pairwise_distances(embeddings)
 
     same_class = labels[:, None] == labels[None, :]
-
     positive_mask = same_class.clone()
     positive_mask.fill_diagonal_(False)
-
     negative_mask = ~same_class
 
     valid = (
@@ -153,7 +152,6 @@ def train_one_epoch(
         optimizer.zero_grad()
 
         embeddings = model(images)
-
         loss = batch_hard_triplet_loss(
             embeddings, labels, margin=margin
         )
@@ -179,6 +177,9 @@ def train_one_epoch(
             f"margin={metrics['margin_accuracy']:.4f}",
             flush=True,
         )
+
+    if num_batches == 0:
+        raise RuntimeError("Training loader produced no batches")
 
     return {
         "loss": total_loss / num_batches,
@@ -207,7 +208,6 @@ def evaluate(
             break
 
         embeddings = model(images)
-
         loss = batch_hard_triplet_loss(
             embeddings, labels, margin=margin
         )
@@ -228,6 +228,9 @@ def evaluate(
             f"margin={metrics['margin_accuracy']:.4f}",
             flush=True,
         )
+
+    if num_batches == 0:
+        raise RuntimeError("Evaluation loader produced no batches")
 
     return {
         "loss": total_loss / num_batches,
@@ -251,22 +254,55 @@ def save_checkpoint(path, model, optimizer, epoch, history):
     )
 
 
+def load_checkpoint(path, model, optimizer):
+    checkpoint = torch.load(
+        path,
+        map_location="cpu",
+        weights_only=True,
+    )
+
+    model.load_state_dict(checkpoint["model_state"])
+    optimizer.load_state_dict(checkpoint["optimizer_state"])
+
+    return checkpoint["epoch"], checkpoint["history"]
+
+
 def main():
+    parser = argparse.ArgumentParser(
+        description="Train a CIFAR-100 embedding model"
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=1,
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        default="checkpoints/resume_test.pt",
+    )
+    args = parser.parse_args()
+
+    if args.epochs < 1:
+        parser.error("--epochs must be at least 1")
+
     set_seed(42)
 
-    # Temporary CPU smoke-test settings.
+    # Temporary settings for the CPU smoke test.
     config = {
         "embedding_dim": 128,
         "optimizer": "adam",
         "lr": 0.001,
         "margin": 0.3,
-        "epochs": 1,
         "classes_per_batch": 8,
         "samples_per_class": 4,
         "max_batches": 5,
     }
 
-    print("Starting CIFAR-100 smoke test...", flush=True)
+    print("Loading CIFAR-100...", flush=True)
 
     train_loader, val_loader, _ = load_cifar100(
         seed=42,
@@ -275,8 +311,6 @@ def main():
     )
 
     print("Dataset loaded successfully.", flush=True)
-    print(f"Train batches: {len(train_loader)}", flush=True)
-    print(f"Validation batches: {len(val_loader)}", flush=True)
 
     model = EmbeddingNet(
         embedding_dim=config["embedding_dim"]
@@ -290,10 +324,45 @@ def main():
 
     print("Model and optimizer initialized.", flush=True)
 
+    start_epoch = 1
     history = []
 
-    for epoch in range(1, config["epochs"] + 1):
-        print(f"\nStarting epoch {epoch}", flush=True)
+    if args.resume:
+        if not Path(args.checkpoint).is_file():
+            raise FileNotFoundError(
+                f"Checkpoint not found: {args.checkpoint}"
+            )
+
+        last_epoch, history = load_checkpoint(
+            args.checkpoint,
+            model,
+            optimizer,
+        )
+
+        start_epoch = last_epoch + 1
+
+        print(
+            f"Resuming from epoch {start_epoch}",
+            flush=True,
+        )
+    else:
+        print(
+            "Starting fresh training run.",
+            flush=True,
+        )
+
+    if start_epoch > args.epochs:
+        print(
+            "Requested epochs already completed.",
+            flush=True,
+        )
+        return
+
+    for epoch in range(start_epoch, args.epochs + 1):
+        print(
+            f"\nStarting epoch {epoch}/{args.epochs}",
+            flush=True,
+        )
 
         train_metrics = train_one_epoch(
             model,
@@ -329,26 +398,24 @@ def main():
             f"train_ordering={row['train_ordering']:.4f} | "
             f"train_margin={row['train_margin']:.4f} | "
             f"val_loss={row['val_loss']:.4f} | "
-            f"val_ordering={row['val_ordering']:.4f} | "
-            f"val_margin={row['val_margin']:.4f}",
+            f"val_ordering={row['val_ordering']:.4f}",
             flush=True,
         )
 
         save_checkpoint(
-            "checkpoints/smoke_test.pt",
+            args.checkpoint,
             model,
             optimizer,
             epoch,
             history,
         )
 
-        print("Checkpoint saved.", flush=True)
+        print(
+            f"Checkpoint saved after epoch {epoch}",
+            flush=True,
+        )
 
-    print("\nSmoke test completed successfully.", flush=True)
-    print(
-        "Test split remains reserved for final evaluation.",
-        flush=True,
-    )
+    print("\nTraining run completed.", flush=True)
 
 
 if __name__ == "__main__":
