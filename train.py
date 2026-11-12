@@ -8,11 +8,8 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision.datasets import CIFAR100
 
-from data import (
-    stratified_split,
-    CIFAR100Subset,
-    ClassBalancedBatchSampler,
-)
+from data import stratified_split, CIFAR100Subset
+from epoch_sampler import EpochBalancedBatchSampler
 from model import EmbeddingNet
 from loss import batch_hard_triplet_loss, pairwise_distances
 from optimizers import MomentumSGD, Adam, NAdam
@@ -51,7 +48,7 @@ def load_cifar100(
     )
 
     def make_loader(dataset, indices, sampler_seed):
-        sampler = ClassBalancedBatchSampler(
+        sampler = EpochBalancedBatchSampler(
             labels,
             indices,
             classes_per_batch=classes_per_batch,
@@ -146,7 +143,7 @@ def train_one_epoch(
     num_batches = 0
 
     for batch_idx, (images, labels) in enumerate(loader):
-        if batch_idx >= max_batches:
+        if max_batches is not None and batch_idx >= max_batches:
             break
 
         optimizer.zero_grad()
@@ -160,9 +157,7 @@ def train_one_epoch(
         optimizer.step()
 
         metrics = triplet_metrics(
-            embeddings.detach(),
-            labels,
-            margin=margin,
+            embeddings.detach(), labels, margin=margin
         )
 
         total_loss += loss.item()
@@ -170,8 +165,10 @@ def train_one_epoch(
         total_margin += metrics["margin_accuracy"]
         num_batches += 1
 
+        total = min(len(loader), max_batches) if max_batches else len(loader)
+
         print(
-            f"Training batch {batch_idx + 1}/{max_batches} | "
+            f"Training batch {batch_idx + 1}/{total} | "
             f"loss={loss.item():.4f} | "
             f"ordering={metrics['ordering_accuracy']:.4f} | "
             f"margin={metrics['margin_accuracy']:.4f}",
@@ -204,7 +201,7 @@ def evaluate(
     num_batches = 0
 
     for batch_idx, (images, labels) in enumerate(loader):
-        if batch_idx >= max_batches:
+        if max_batches is not None and batch_idx >= max_batches:
             break
 
         embeddings = model(images)
@@ -221,8 +218,10 @@ def evaluate(
         total_margin += metrics["margin_accuracy"]
         num_batches += 1
 
+        total = min(len(loader), max_batches) if max_batches else len(loader)
+
         print(
-            f"{name} batch {batch_idx + 1}/{max_batches} | "
+            f"{name} batch {batch_idx + 1}/{total} | "
             f"loss={loss.item():.4f} | "
             f"ordering={metrics['ordering_accuracy']:.4f} | "
             f"margin={metrics['margin_accuracy']:.4f}",
@@ -272,26 +271,32 @@ def main():
         description="Train a CIFAR-100 embedding model"
     )
     parser.add_argument(
-        "--epochs",
-        type=int,
-        default=1,
+        "--epochs", type=int, default=1
     )
     parser.add_argument(
-        "--resume",
-        action="store_true",
+        "--resume", action="store_true"
     )
     parser.add_argument(
         "--checkpoint",
-        default="checkpoints/resume_test.pt",
+        default="checkpoints/sampler_smoke.pt",
     )
+    parser.add_argument(
+        "--max-batches",
+        type=int,
+        default=5,
+        help="Maximum batches per phase; 0 means all batches",
+    )
+
     args = parser.parse_args()
 
     if args.epochs < 1:
         parser.error("--epochs must be at least 1")
 
+    if args.max_batches < 0:
+        parser.error("--max-batches cannot be negative")
+
     set_seed(42)
 
-    # Temporary settings for the CPU smoke test.
     config = {
         "embedding_dim": 128,
         "optimizer": "adam",
@@ -299,8 +304,12 @@ def main():
         "margin": 0.3,
         "classes_per_batch": 8,
         "samples_per_class": 4,
-        "max_batches": 5,
     }
+
+    max_batches = (
+        None if args.max_batches == 0
+        else args.max_batches
+    )
 
     print("Loading CIFAR-100...", flush=True)
 
@@ -310,7 +319,11 @@ def main():
         samples_per_class=config["samples_per_class"],
     )
 
-    print("Dataset loaded successfully.", flush=True)
+    print(
+        f"Train batches: {len(train_loader)} | "
+        f"Validation batches: {len(val_loader)}",
+        flush=True,
+    )
 
     model = EmbeddingNet(
         embedding_dim=config["embedding_dim"]
@@ -322,8 +335,6 @@ def main():
         lr=config["lr"],
     )
 
-    print("Model and optimizer initialized.", flush=True)
-
     start_epoch = 1
     history = []
 
@@ -334,9 +345,7 @@ def main():
             )
 
         last_epoch, history = load_checkpoint(
-            args.checkpoint,
-            model,
-            optimizer,
+            args.checkpoint, model, optimizer
         )
 
         start_epoch = last_epoch + 1
@@ -346,19 +355,15 @@ def main():
             flush=True,
         )
     else:
-        print(
-            "Starting fresh training run.",
-            flush=True,
-        )
+        print("Starting fresh training run.", flush=True)
 
     if start_epoch > args.epochs:
-        print(
-            "Requested epochs already completed.",
-            flush=True,
-        )
+        print("Requested epochs already completed.")
         return
 
     for epoch in range(start_epoch, args.epochs + 1):
+        train_loader.batch_sampler.set_epoch(epoch)
+
         print(
             f"\nStarting epoch {epoch}/{args.epochs}",
             flush=True,
@@ -369,14 +374,14 @@ def main():
             train_loader,
             optimizer,
             margin=config["margin"],
-            max_batches=config["max_batches"],
+            max_batches=max_batches,
         )
 
         val_metrics = evaluate(
             model,
             val_loader,
             margin=config["margin"],
-            max_batches=config["max_batches"],
+            max_batches=max_batches,
             name="Validation",
         )
 
@@ -389,7 +394,6 @@ def main():
             "val_ordering": val_metrics["ordering_accuracy"],
             "val_margin": val_metrics["margin_accuracy"],
         }
-
         history.append(row)
 
         print(
