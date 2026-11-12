@@ -13,6 +13,7 @@ from epoch_sampler import EpochBalancedBatchSampler
 from model import EmbeddingNet
 from loss import batch_hard_triplet_loss, pairwise_distances
 from optimizers import MomentumSGD, Adam, NAdam
+from metrics import save_metrics
 
 
 def set_seed(seed=42):
@@ -142,6 +143,12 @@ def train_one_epoch(
     total_margin = 0.0
     num_batches = 0
 
+    total = (
+        min(len(loader), max_batches)
+        if max_batches is not None
+        else len(loader)
+    )
+
     for batch_idx, (images, labels) in enumerate(loader):
         if max_batches is not None and batch_idx >= max_batches:
             break
@@ -164,8 +171,6 @@ def train_one_epoch(
         total_ordering += metrics["ordering_accuracy"]
         total_margin += metrics["margin_accuracy"]
         num_batches += 1
-
-        total = min(len(loader), max_batches) if max_batches else len(loader)
 
         print(
             f"Training batch {batch_idx + 1}/{total} | "
@@ -200,6 +205,12 @@ def evaluate(
     total_margin = 0.0
     num_batches = 0
 
+    total = (
+        min(len(loader), max_batches)
+        if max_batches is not None
+        else len(loader)
+    )
+
     for batch_idx, (images, labels) in enumerate(loader):
         if max_batches is not None and batch_idx >= max_batches:
             break
@@ -217,8 +228,6 @@ def evaluate(
         total_ordering += metrics["ordering_accuracy"]
         total_margin += metrics["margin_accuracy"]
         num_batches += 1
-
-        total = min(len(loader), max_batches) if max_batches else len(loader)
 
         print(
             f"{name} batch {batch_idx + 1}/{total} | "
@@ -270,15 +279,23 @@ def main():
     parser = argparse.ArgumentParser(
         description="Train a CIFAR-100 embedding model"
     )
+
     parser.add_argument(
-        "--epochs", type=int, default=1
+        "--epochs",
+        type=int,
+        default=1,
     )
     parser.add_argument(
-        "--resume", action="store_true"
+        "--resume",
+        action="store_true",
     )
     parser.add_argument(
         "--checkpoint",
         default="checkpoints/sampler_smoke.pt",
+    )
+    parser.add_argument(
+        "--metrics",
+        default="results/sampler_smoke_metrics.csv",
     )
     parser.add_argument(
         "--max-batches",
@@ -345,7 +362,9 @@ def main():
             )
 
         last_epoch, history = load_checkpoint(
-            args.checkpoint, model, optimizer
+            args.checkpoint,
+            model,
+            optimizer,
         )
 
         start_epoch = last_epoch + 1
@@ -394,6 +413,7 @@ def main():
             "val_ordering": val_metrics["ordering_accuracy"],
             "val_margin": val_metrics["margin_accuracy"],
         }
+
         history.append(row)
 
         print(
@@ -414,8 +434,17 @@ def main():
             history,
         )
 
+        save_metrics(
+            history,
+            args.metrics,
+        )
+
         print(
-            f"Checkpoint saved after epoch {epoch}",
+            f"Checkpoint saved: {args.checkpoint}",
+            flush=True,
+        )
+        print(
+            f"Metrics saved: {args.metrics}",
             flush=True,
         )
 
