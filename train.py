@@ -247,30 +247,68 @@ def evaluate(
     }
 
 
-def save_checkpoint(path, model, optimizer, epoch, history):
+def save_checkpoint(
+    path, model, optimizer, epoch, history, config=None
+):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    torch.save(
-        {
-            "epoch": epoch,
-            "model_state": model.state_dict(),
-            "optimizer_state": optimizer.state_dict(),
-            "history": history,
-        },
-        path,
-    )
+    numpy_state = np.random.get_state()
+
+    checkpoint = {
+        "epoch": epoch,
+        "model_state": model.state_dict(),
+        "optimizer_state": optimizer.state_dict(),
+        "history": history,
+        "config": config,
+        "python_rng": random.getstate(),
+        "numpy_rng": (
+            numpy_state[0],
+            numpy_state[1].tolist(),
+            numpy_state[2],
+            numpy_state[3],
+            numpy_state[4],
+        ),
+        "torch_rng": torch.get_rng_state(),
+    }
+
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    torch.save(checkpoint, temp_path)
+    temp_path.replace(path)
 
 
-def load_checkpoint(path, model, optimizer):
+def load_checkpoint(path, model, optimizer, config=None):
     checkpoint = torch.load(
         path,
         map_location="cpu",
         weights_only=True,
     )
 
+    if config is not None:
+        if checkpoint.get("config") != config:
+            raise ValueError(
+                "Checkpoint configuration does not match "
+                "the current experiment"
+            )
+
     model.load_state_dict(checkpoint["model_state"])
     optimizer.load_state_dict(checkpoint["optimizer_state"])
+
+    if "python_rng" in checkpoint:
+        random.setstate(checkpoint["python_rng"])
+
+    if "numpy_rng" in checkpoint:
+        state = checkpoint["numpy_rng"]
+        np.random.set_state((
+            state[0],
+            np.array(state[1], dtype=np.uint32),
+            state[2],
+            state[3],
+            state[4],
+        ))
+
+    if "torch_rng" in checkpoint:
+        torch.set_rng_state(checkpoint["torch_rng"])
 
     return checkpoint["epoch"], checkpoint["history"]
 
@@ -291,11 +329,11 @@ def main():
     )
     parser.add_argument(
         "--checkpoint",
-        default="checkpoints/sampler_smoke.pt",
+        default="checkpoints/repro_test.pt",
     )
     parser.add_argument(
         "--metrics",
-        default="results/sampler_smoke_metrics.csv",
+        default="results/repro_test.csv",
     )
     parser.add_argument(
         "--max-batches",
@@ -314,6 +352,12 @@ def main():
 
     set_seed(42)
 
+    max_batches = (
+        None if args.max_batches == 0
+        else args.max_batches
+    )
+
+    # Keep training settings fixed for this smoke test.
     config = {
         "embedding_dim": 128,
         "optimizer": "adam",
@@ -321,17 +365,14 @@ def main():
         "margin": 0.3,
         "classes_per_batch": 8,
         "samples_per_class": 4,
+        "max_batches": args.max_batches,
+        "seed": 42,
     }
-
-    max_batches = (
-        None if args.max_batches == 0
-        else args.max_batches
-    )
 
     print("Loading CIFAR-100...", flush=True)
 
     train_loader, val_loader, _ = load_cifar100(
-        seed=42,
+        seed=config["seed"],
         classes_per_batch=config["classes_per_batch"],
         samples_per_class=config["samples_per_class"],
     )
@@ -365,6 +406,7 @@ def main():
             args.checkpoint,
             model,
             optimizer,
+            config=config,
         )
 
         start_epoch = last_epoch + 1
@@ -374,6 +416,12 @@ def main():
             flush=True,
         )
     else:
+        if Path(args.checkpoint).exists():
+            raise FileExistsError(
+                f"Checkpoint already exists: {args.checkpoint}. "
+                "Use --resume or choose another checkpoint path."
+            )
+
         print("Starting fresh training run.", flush=True)
 
     if start_epoch > args.epochs:
@@ -422,7 +470,8 @@ def main():
             f"train_ordering={row['train_ordering']:.4f} | "
             f"train_margin={row['train_margin']:.4f} | "
             f"val_loss={row['val_loss']:.4f} | "
-            f"val_ordering={row['val_ordering']:.4f}",
+            f"val_ordering={row['val_ordering']:.4f} | "
+            f"val_margin={row['val_margin']:.4f}",
             flush=True,
         )
 
@@ -432,12 +481,10 @@ def main():
             optimizer,
             epoch,
             history,
+            config=config,
         )
 
-        save_metrics(
-            history,
-            args.metrics,
-        )
+        save_metrics(history, args.metrics)
 
         print(
             f"Checkpoint saved: {args.checkpoint}",
