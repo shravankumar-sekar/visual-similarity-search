@@ -1,30 +1,7 @@
-cd ~/projects/visual-similarity-search
-source .venv/bin/activate
-
-python - <<'PY'
-from importlib.metadata import version
-from pathlib import Path
-
-packages = [
-    "torch",
-    "torchvision",
-    "numpy",
-    "pillow",
-    "streamlit",
-    "pytest",
-]
-
-lines = [
-    "--extra-index-url https://download.pytorch.org/whl/cpu",
-]
-
-for package in packages:
-    lines.append(f"{package}=={version(package)}")
-
-Path("requirements.txt").write_text(
-    "\n".join(lines) + "\n",
-    encoding="utf-8",
-)
-
-print(Path("requirements.txt").read_text())
-PY
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.15.0+cpu
+torchvision==0.29.2+cpu
+numpy==2.5.4
+pillow==12.3.0
+streamlit==1.67.0
+pytest==9.2.0
