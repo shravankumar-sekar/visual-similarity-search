@@ -235,7 +235,7 @@ The similarity score shown in the application is calculated as `1 / (1 + distanc
 
 I recorded five queries using the Streamlit interface to demonstrate the retrieval process.
 
-**Video:** [Add Loom or recording link]
+**Video:** [Watch the Streamlit demo](https://drive.google.com/file/d/1GQ6iPCIp5cjUK7GOo1_A1EKUppnSZ_TF/view?usp=sharing)
 
 ## 8. Project Structure
 
@@ -272,7 +272,7 @@ The project was developed using Python 3.14.4 on Ubuntu WSL with CPU-only PyTorc
 Clone the repository and create a virtual environment:
 
 ```bash
-git clone <REPOSITORY_URL>
+git clone https://github.com/shravankumar-sekar/visual-similarity-search.git
 cd visual-similarity-search
 
 python3 -m venv .venv
