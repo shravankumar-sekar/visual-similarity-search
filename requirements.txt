@@ -1,19 +1,30 @@
+cd ~/projects/visual-similarity-search
+source .venv/bin/activate
+
 python - <<'PY'
+from importlib.metadata import version
 from pathlib import Path
 
-path = Path("requirements.txt")
-text = path.read_text(encoding="utf-8")
+packages = [
+    "torch",
+    "torchvision",
+    "numpy",
+    "pillow",
+    "streamlit",
+    "pytest",
+]
 
-if not any(
-    line.strip().lower().startswith(("streamlit==", "streamlit>=", "streamlit~="))
-    for line in text.splitlines()
-):
-    import streamlit
-    path.write_text(
-        text.rstrip() + f"\nstreamlit=={streamlit.__version__}\n",
-        encoding="utf-8",
-    )
-    print("Added Streamlit to requirements.txt")
-else:
-    print("Streamlit already listed")
+lines = [
+    "--extra-index-url https://download.pytorch.org/whl/cpu",
+]
+
+for package in packages:
+    lines.append(f"{package}=={version(package)}")
+
+Path("requirements.txt").write_text(
+    "\n".join(lines) + "\n",
+    encoding="utf-8",
+)
+
+print(Path("requirements.txt").read_text())
 PY
